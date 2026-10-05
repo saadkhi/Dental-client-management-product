@@ -97,6 +97,22 @@ export const api = {
       body: JSON.stringify(updates)
     }),
 
+  // ─── Patient Trash ─────────────────────────────────────────────────────────
+  deletePatient: (id: string) =>
+    fetchJson<Patient>(`/api/patients/${id}`, { method: 'DELETE' }),
+
+  getTrashedPatients: () =>
+    fetchJson<Patient[]>('/api/patients/trash'),
+
+  restorePatient: (id: string) =>
+    fetchJson<Patient>(`/api/patients/${id}/restore`, { method: 'PATCH' }),
+
+  permanentlyDeletePatient: (id: string) =>
+    fetchJson<void>(`/api/patients/${id}/permanent`, { method: 'DELETE' }),
+
+  emptyPatientTrash: () =>
+    fetchJson<{ deleted: number }>('/api/patients/trash/empty', { method: 'DELETE' }),
+
   addMedicalHistory: (patientId: string, item: any) =>
     fetchJson<any>(`/api/patients/${patientId}/medical-history`, {
       method: 'POST',

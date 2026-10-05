@@ -80,6 +80,9 @@ CREATE TABLE IF NOT EXISTS patients (
   allergies                 TEXT,   -- denormalised summary string for fast scanning
   general_medical_notes     TEXT,
   status                    TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','INACTIVE')),
+  -- Soft-delete: NULL = active, non-NULL = in trash. Hard-delete removes the row entirely.
+  deleted_at                TIMESTAMPTZ,
+  deleted_by                TEXT,           -- name of the user who moved to trash
   created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at                TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -417,3 +420,19 @@ DO $$ BEGIN
     CREATE INDEX idx_xrays_created_at ON patient_xrays(created_at DESC);
   END IF;
 END $$;
+
+-- ─── MIGRATION HELPERS — soft-delete columns ─────────────────────────────────
+-- Idempotent: safe to run on existing databases that pre-date this change.
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'patients' AND column_name = 'deleted_at'
+  ) THEN
+    ALTER TABLE patients ADD COLUMN deleted_at  TIMESTAMPTZ;
+    ALTER TABLE patients ADD COLUMN deleted_by  TEXT;
+  END IF;
+END $$;
+
+-- Partial index so active-patient queries skip all trashed rows at the index level.
+CREATE INDEX IF NOT EXISTS idx_patients_not_deleted ON patients(created_at DESC) WHERE deleted_at IS NULL;

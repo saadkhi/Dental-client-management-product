@@ -17,6 +17,7 @@ import { ReportsHub } from './components/reports/ReportsHub.js';
 import { AuditLogsHub } from './components/audit/AuditLogsHub.js';
 import { SettingsHub } from './components/settings/SettingsHub.js';
 import { UsersHub } from './components/users/UsersHub.js';
+import { PatientTrashHub } from './components/patients/PatientTrashHub.js';
 
 // Modals
 import { NewAppointmentModal } from './components/appointments/NewAppointmentModal.js';
@@ -271,6 +272,8 @@ export default function App() {
                 onOpenNewPrescription={(ptId) => handleOpenNewPrescription(ptId)}
                 onOpenPrintCenter={(docType, appt, ptId, rx) => handleOpenPrintCenter(docType, appt, ptId, rx)}
                 onRescheduleAppointment={handleOpenReschedule}
+                currentUserRole={currentUser.role}
+                onPatientDeleted={() => setSelectedPatientId(null)}
               />
             ) : (
               <PatientsHub
@@ -296,6 +299,7 @@ export default function App() {
           {currentSection === 'audit'         && <AuditLogsHub />}
           {currentSection === 'settings'      && <SettingsHub />}
           {currentSection === 'staff'         && <UsersHub currentUserId={currentUser.id} />}
+          {currentSection === 'trash'         && <PatientTrashHub currentUserRole={currentUser.role} />}
         </main>
       </div>
 

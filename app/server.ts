@@ -967,6 +967,55 @@ app.post('/api/audit-logs/print', async (req, res) => {
   } catch (err: any) { res.status(500).json({ success: false, error: { message: err.message } }); }
 });
 
+// ─── Patient Trash / Soft-Delete / Restore / Hard-Delete ─────────────────────
+
+// GET  /api/patients/trash  — list all trashed patients (ADMIN + RECEPTIONIST)
+app.get('/api/patients/trash', requireRole('ADMIN', 'RECEPTIONIST'), async (_req, res) => {
+  try {
+    const patients = await db.getTrashedPatients();
+    res.json({ success: true, data: patients });
+  } catch (err: any) { res.status(500).json({ success: false, error: { message: err.message } }); }
+});
+
+// DELETE /api/patients/:id  — soft-delete (move to trash)
+app.delete('/api/patients/:id', requireRole('ADMIN', 'RECEPTIONIST'), async (req, res) => {
+  try {
+    const cu = currentUser(req);
+    const patient = await db.softDeletePatient(req.params.id, cu.id, cu.name, cu.role);
+    if (!patient) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Patient not found or already in trash.' } });
+    res.json({ success: true, data: patient });
+  } catch (err: any) { res.status(500).json({ success: false, error: { message: err.message } }); }
+});
+
+// PATCH /api/patients/:id/restore  — restore from trash
+app.patch('/api/patients/:id/restore', requireRole('ADMIN', 'RECEPTIONIST'), async (req, res) => {
+  try {
+    const cu = currentUser(req);
+    const patient = await db.restorePatient(req.params.id, cu.id, cu.name, cu.role);
+    if (!patient) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Patient not found in trash.' } });
+    res.json({ success: true, data: patient });
+  } catch (err: any) { res.status(500).json({ success: false, error: { message: err.message } }); }
+});
+
+// DELETE /api/patients/:id/permanent  — permanently delete one trashed patient (ADMIN only)
+app.delete('/api/patients/:id/permanent', requireRole('ADMIN'), async (req, res) => {
+  try {
+    const cu = currentUser(req);
+    const deleted = await db.hardDeletePatient(req.params.id, cu.id, cu.name, cu.role);
+    if (!deleted) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Patient not found in trash.' } });
+    res.json({ success: true });
+  } catch (err: any) { res.status(500).json({ success: false, error: { message: err.message } }); }
+});
+
+// DELETE /api/patients/trash/empty  — permanently delete ALL trashed patients (ADMIN only)
+app.delete('/api/patients/trash/empty', requireRole('ADMIN'), async (req, res) => {
+  try {
+    const cu = currentUser(req);
+    const count = await db.emptyPatientTrash(cu.id, cu.name, cu.role);
+    res.json({ success: true, data: { deleted: count } });
+  } catch (err: any) { res.status(500).json({ success: false, error: { message: err.message } }); }
+});
+
 // ─── Health check ─────────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', ts: Date.now() }));
 

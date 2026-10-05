@@ -105,6 +105,8 @@ function mapPatient(r: any): Patient {
     allergies: r.allergies,
     generalMedicalNotes: r.general_medical_notes,
     status: r.status,
+    deletedAt: r.deleted_at ?? undefined,
+    deletedBy: r.deleted_by ?? undefined,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -739,31 +741,37 @@ export async function getPatients(
     const rawLike = `%${q.replace(/[%_\\]/g, '\\$&')}%`;
     rows = await query(
       `SELECT * FROM patients
-       WHERE lower(first_name) LIKE $1 ESCAPE '\\'
+       WHERE deleted_at IS NULL
+         AND (
+           lower(first_name) LIKE $1 ESCAPE '\\'
           OR lower(last_name)  LIKE $1 ESCAPE '\\'
           OR lower(first_name || ' ' || last_name) LIKE $1 ESCAPE '\\'
           OR phone LIKE $2 ESCAPE '\\'
           OR patient_number LIKE $2 ESCAPE '\\'
           OR lower(email) LIKE $1 ESCAPE '\\'
+         )
        ORDER BY created_at DESC LIMIT $3 OFFSET $4`,
       [like, rawLike, limit, offset]
     );
     countRows = await query(
       `SELECT COUNT(*) FROM patients
-       WHERE lower(first_name) LIKE $1 ESCAPE '\\'
+       WHERE deleted_at IS NULL
+         AND (
+           lower(first_name) LIKE $1 ESCAPE '\\'
           OR lower(last_name)  LIKE $1 ESCAPE '\\'
           OR lower(first_name || ' ' || last_name) LIKE $1 ESCAPE '\\'
           OR phone LIKE $2 ESCAPE '\\'
           OR patient_number LIKE $2 ESCAPE '\\'
-          OR lower(email) LIKE $1 ESCAPE '\\'`,
+          OR lower(email) LIKE $1 ESCAPE '\\'
+         )`,
       [like, rawLike]
     );
   } else {
     rows = await query(
-      'SELECT * FROM patients ORDER BY created_at DESC LIMIT $1 OFFSET $2',
+      'SELECT * FROM patients WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT $1 OFFSET $2',
       [limit, offset]
     );
-    countRows = await query('SELECT COUNT(*) FROM patients');
+    countRows = await query('SELECT COUNT(*) FROM patients WHERE deleted_at IS NULL');
   }
 
   return {
@@ -784,7 +792,7 @@ export async function getPatientById(id: string): Promise<(Patient & {
   xrays: PatientXRay[];
 }) | null> {
   const ptRows = await query(
-    'SELECT * FROM patients WHERE id = $1 OR patient_number = $1',
+    'SELECT * FROM patients WHERE (id = $1 OR patient_number = $1) AND deleted_at IS NULL',
     [id]
   );
   if (!ptRows[0]) return null;
@@ -1901,4 +1909,139 @@ export async function deletePatientXRay(
   );
   if (!rows[0]) return { found: false, blobUrl: null };
   return { found: true, blobUrl: rows[0].blob_url };
+}
+
+// ─── Patient Soft-Delete / Trash / Restore / Hard-Delete ─────────────────────
+
+/**
+ * Soft-delete a patient — sets deleted_at and deleted_by, hides from all
+ * normal queries. Does NOT touch related records (appointments, prescriptions
+ * etc.) so clinical history is fully preserved.
+ */
+export async function softDeletePatient(
+  id: string,
+  actorId = 'system',
+  actorName = 'Receptionist',
+  actorRole: UserRole = 'RECEPTIONIST'
+): Promise<Patient | null> {
+  const rows = await query<any>(
+    `UPDATE patients
+     SET deleted_at = NOW(), deleted_by = $1, updated_at = NOW()
+     WHERE id = $2 AND deleted_at IS NULL
+     RETURNING *`,
+    [actorName, id]
+  );
+  if (!rows[0]) return null;
+  const patient = mapPatient(rows[0]);
+  await logAudit({
+    userId: actorId, userName: actorName, userRole: actorRole,
+    action: 'PATIENT_TRASHED', entityType: 'PATIENT',
+    entityId: id,
+    entityName: `${patient.firstName} ${patient.lastName} (${patient.patientNumber})`,
+  });
+  return patient;
+}
+
+/**
+ * Return all patients currently in the trash (deleted_at IS NOT NULL).
+ * Ordered most-recently-deleted first.
+ */
+export async function getTrashedPatients(): Promise<Patient[]> {
+  const rows = await query(
+    `SELECT * FROM patients WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`
+  );
+  return rows.map(mapPatient);
+}
+
+/**
+ * Restore a trashed patient — clears deleted_at and deleted_by.
+ */
+export async function restorePatient(
+  id: string,
+  actorId = 'system',
+  actorName = 'Receptionist',
+  actorRole: UserRole = 'RECEPTIONIST'
+): Promise<Patient | null> {
+  const rows = await query<any>(
+    `UPDATE patients
+     SET deleted_at = NULL, deleted_by = NULL, updated_at = NOW()
+     WHERE id = $1 AND deleted_at IS NOT NULL
+     RETURNING *`,
+    [id]
+  );
+  if (!rows[0]) return null;
+  const patient = mapPatient(rows[0]);
+  await logAudit({
+    userId: actorId, userName: actorName, userRole: actorRole,
+    action: 'PATIENT_RESTORED', entityType: 'PATIENT',
+    entityId: id,
+    entityName: `${patient.firstName} ${patient.lastName} (${patient.patientNumber})`,
+  });
+  return patient;
+}
+
+/**
+ * Permanently delete a single trashed patient and all their related records.
+ * The patients table has ON DELETE RESTRICT for appointments/treatments/
+ * prescriptions/visits, so those must be hard-deleted first, then the patient.
+ * CASCADE takes care of sub-entities (allergies, medications, dental_history,
+ * patient_medical_history, patient_xrays) automatically.
+ */
+export async function hardDeletePatient(
+  id: string,
+  actorId = 'system',
+  actorName = 'Admin',
+  actorRole: UserRole = 'ADMIN'
+): Promise<boolean> {
+  // Verify the patient is actually in the trash before permanently deleting.
+  const check = await query('SELECT id, first_name, last_name, patient_number FROM patients WHERE id = $1 AND deleted_at IS NOT NULL', [id]);
+  if (!check[0]) return false;
+  const { first_name, last_name, patient_number } = check[0];
+
+  await transaction(async (q) => {
+    // Delete RESTRICT-constrained child records first so the final DELETE succeeds.
+    await q('DELETE FROM appointment_reminders WHERE appointment_id IN (SELECT id FROM appointments WHERE patient_id = $1)', [id]);
+    await q('DELETE FROM prescription_items    WHERE prescription_id IN (SELECT id FROM prescriptions WHERE patient_id = $1)', [id]);
+    await q('DELETE FROM treatments   WHERE patient_id = $1', [id]);
+    await q('DELETE FROM prescriptions WHERE patient_id = $1', [id]);
+    await q('DELETE FROM visits        WHERE patient_id = $1', [id]);
+    await q('DELETE FROM appointments  WHERE patient_id = $1', [id]);
+    // patient_xrays, patient_allergies, patient_medications, patient_medical_history,
+    // dental_history all have ON DELETE CASCADE so they're removed by the row delete below.
+    await q('DELETE FROM patients WHERE id = $1', [id]);
+  });
+
+  await logAudit({
+    userId: actorId, userName: actorName, userRole: actorRole,
+    action: 'PATIENT_PERMANENTLY_DELETED', entityType: 'PATIENT',
+    entityId: id,
+    entityName: `${first_name} ${last_name} (${patient_number})`,
+  });
+  return true;
+}
+
+/**
+ * Empty the entire trash — permanently delete every patient with deleted_at IS NOT NULL.
+ * Returns the count of patients destroyed.
+ */
+export async function emptyPatientTrash(
+  actorId = 'system',
+  actorName = 'Admin',
+  actorRole: UserRole = 'ADMIN'
+): Promise<number> {
+  const trashed = await getTrashedPatients();
+  if (trashed.length === 0) return 0;
+
+  for (const patient of trashed) {
+    await hardDeletePatient(patient.id, actorId, actorName, actorRole);
+  }
+
+  // Single summary audit entry rather than one per patient to keep the log clean.
+  await logAudit({
+    userId: actorId, userName: actorName, userRole: actorRole,
+    action: 'PATIENT_TRASH_EMPTIED', entityType: 'PATIENT',
+    entityId: 'trash',
+    entityName: `${trashed.length} patient record(s) permanently deleted`,
+  });
+  return trashed.length;
 }

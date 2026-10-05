@@ -8,12 +8,13 @@ import {
   CalendarPlus,
   Printer,
   ChevronRight,
-  Eye
+  Trash2,
 } from 'lucide-react';
 import { Patient, BloodGroup } from '../../types/index.js';
 import { api } from '../../lib/api.js';
 import { calculateAge, formatDate } from '../../lib/utils.js';
 import { BLOOD_GROUPS_WITH_ALL } from '../../lib/constants.js';
+import { ConfirmDialog } from '../ui/Toast.js';
 
 interface PatientsHubProps {
   onSelectPatient: (patientId: string) => void;
@@ -35,6 +36,21 @@ export const PatientsHub: React.FC<PatientsHubProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [bloodGroupFilter, setBloodGroupFilter] = useState<string>('ALL');
   const [loading, setLoading] = useState(true);
+  const [deleteTarget, setDeleteTarget] = useState<Patient | null>(null);
+  const [deleteError, setDeleteError] = useState('');
+
+  const handleDeleteToTrash = async () => {
+    if (!deleteTarget) return;
+    try {
+      await api.deletePatient(deleteTarget.id);
+      setPatients(prev => prev.filter(p => p.id !== deleteTarget.id));
+      setTotal(prev => prev - 1);
+    } catch (err: any) {
+      setDeleteError(err.message || 'Failed to move patient to trash.');
+    } finally {
+      setDeleteTarget(null);
+    }
+  };
 
   const loadPatients = async () => {
     try {
@@ -238,6 +254,13 @@ export const PatientsHub: React.FC<PatientsHubProps> = ({
                             <span>Open Chart</span>
                             <ChevronRight className="w-3 h-3" />
                           </button>
+                          <button
+                            onClick={() => setDeleteTarget(p)}
+                            className="p-1.5 bg-slate-100 hover:bg-rose-50 text-rose-600 rounded-md text-xs border border-transparent hover:border-rose-200"
+                            title="Move to trash"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -248,6 +271,23 @@ export const PatientsHub: React.FC<PatientsHubProps> = ({
           )}
         </div>
       </div>
+      {/* ── Delete to trash confirmation ─────────────────────── */}
+      {deleteError && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 px-4 py-3 bg-rose-50 border border-rose-300 rounded-xl shadow-lg text-xs text-rose-800">
+          {deleteError}
+          <button onClick={() => setDeleteError('')} className="ml-3 underline">Dismiss</button>
+        </div>
+      )}
+      <ConfirmDialog
+        isOpen={deleteTarget !== null}
+        title="Move Patient to Trash"
+        message={`Move ${deleteTarget?.firstName ?? ''} ${deleteTarget?.lastName ?? ''} (${deleteTarget?.patientNumber ?? ''}) to trash? All clinical records are preserved and can be restored from the Patient Trash section.`}
+        confirmLabel="Move to Trash"
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={handleDeleteToTrash}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 };

@@ -58,10 +58,10 @@ export type BloodGroup = 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-' | 'O+' | 'O-'
 
 export interface Patient {
   id: string;
-  patientNumber: string; // e.g. "PT-000001"
+  patientNumber: string;
   firstName: string;
   lastName: string;
-  dateOfBirth: string; // "YYYY-MM-DD"
+  dateOfBirth: string;
   gender: Gender;
   phone: string;
   alternatePhone?: string;
@@ -72,9 +72,11 @@ export interface Patient {
   emergencyContactRelation?: string;
   bloodGroup: BloodGroup;
   occupation?: string;
-  allergies?: string; // Summary string for rapid scanning
+  allergies?: string;
   generalMedicalNotes?: string;
   status: PatientStatus;
+  deletedAt?: string;  // ISO timestamp — present when patient is in trash
+  deletedBy?: string;  // name of user who moved to trash
   createdAt: string;
   updatedAt: string;
 }

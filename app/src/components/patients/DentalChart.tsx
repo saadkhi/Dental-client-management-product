@@ -18,7 +18,7 @@ export const DentalChart: React.FC<DentalChartProps> = ({
   readOnly = false
 }) => {
   const [selectedTooth, setSelectedTooth] = useState<number | null>(null);
-  const [selectedCondition, setSelectedCondition] = useState<ToothCondition>('HEALTHY');
+  const [selectedCondition, setSelectedCondition] = useState<ToothCondition | ''>('');
   const [toothNotes, setToothNotes] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -36,7 +36,9 @@ export const DentalChart: React.FC<DentalChartProps> = ({
     if (readOnly) return;
     const existing = getToothData(num);
     setSelectedTooth(num);
-    setSelectedCondition(existing?.condition || 'HEALTHY');
+    // Default to '' (None) when the tooth has no recorded condition yet,
+    // so the dropdown opens showing "— None (clear) —" rather than assuming HEALTHY.
+    setSelectedCondition(existing?.condition || '');
     setToothNotes(existing?.notes || '');
     setSaveError('');
   };
@@ -46,7 +48,17 @@ export const DentalChart: React.FC<DentalChartProps> = ({
     setSaveError('');
     try {
       setIsUpdating(true);
-      await onUpdateToothCondition(selectedTooth, selectedCondition, toothNotes);
+      if (selectedCondition === '') {
+        // "None" selected: if the tooth already had a condition, reset it to HEALTHY
+        // (the API has no delete — HEALTHY is the visual equivalent of "clear").
+        const existing = getToothData(selectedTooth);
+        if (existing) {
+          await onUpdateToothCondition(selectedTooth, 'HEALTHY', '');
+        }
+        // If no existing record, nothing to save — just close.
+      } else {
+        await onUpdateToothCondition(selectedTooth, selectedCondition, toothNotes);
+      }
       setSelectedTooth(null);
     } catch (err: any) {
       setSaveError(err.message || 'Failed to update tooth condition. Please try again.');
@@ -186,9 +198,10 @@ export const DentalChart: React.FC<DentalChartProps> = ({
               <label className="block text-slate-400 font-medium mb-1">Tooth Diagnosis / Status</label>
               <select
                 value={selectedCondition}
-                onChange={(e) => setSelectedCondition(e.target.value as ToothCondition)}
+                onChange={(e) => setSelectedCondition(e.target.value as ToothCondition | '')}
                 className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg p-2 text-xs focus:ring-1 focus:ring-blue-800 focus:outline-hidden"
               >
+                <option value="">— None (clear condition) —</option>
                 {TOOTH_CONDITIONS.map(c => (
                   <option key={c.value} value={c.value}>{c.label}</option>
                 ))}

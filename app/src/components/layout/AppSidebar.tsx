@@ -12,6 +12,7 @@ import {
   LayoutDashboard,
   Printer,
   UserCog,
+  Trash2,
   X,
 } from 'lucide-react';
 
@@ -26,7 +27,8 @@ export type NavItemKey =
   | 'reports'
   | 'audit'
   | 'settings'
-  | 'staff';
+  | 'staff'
+  | 'trash';
 
 export type NavSection = NavItemKey;
 
@@ -70,6 +72,8 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
     ...(isAdmin ? [{ key: 'audit' as NavItemKey, label: 'Audit Logs', icon: ShieldAlert }] : []),
     { key: 'settings',      label: 'Settings',      icon: Settings },
     { key: 'staff',         label: 'Staff Mgmt',    icon: UserCog },
+    // Patient trash — visible to all authenticated users (ADMIN can empty, RECEPTIONIST can restore)
+    { key: 'trash' as NavItemKey,  label: 'Patient Trash',  icon: Trash2 },
   ];
 
   return (

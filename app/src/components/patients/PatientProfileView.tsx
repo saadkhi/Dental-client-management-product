@@ -22,7 +22,7 @@ import {
   X,
   Save,
 } from 'lucide-react';
-import { Patient, PatientFull, ToothCondition, Appointment, Treatment, Prescription, Visit, MedicalHistory, Allergy, Gender, BloodGroup } from '../../types/index.js';
+import { Patient, PatientFull, ToothCondition, Appointment, Treatment, Prescription, Visit, MedicalHistory, Allergy, Gender, BloodGroup, UserRole } from '../../types/index.js';
 import { api } from '../../lib/api.js';
 import { BLOOD_GROUPS, GENDER_OPTIONS } from '../../lib/constants.js';
 import { formatDate, formatTime, calculateAge, getStatusBadgeClasses } from '../../lib/utils.js';
@@ -37,6 +37,8 @@ interface PatientProfileViewProps {
   onOpenNewPrescription: (patientId: string) => void;
   onOpenPrintCenter: (docType: string, appointment?: Appointment, patientId?: string, prescription?: Prescription) => void;
   onRescheduleAppointment: (appointment: Appointment) => void;
+  currentUserRole?: UserRole;
+  onPatientDeleted?: () => void;
 }
 
 type TabType = 'overview' | 'dental-chart' | 'medical' | 'allergies' | 'appointments' | 'treatments' | 'prescriptions' | 'visits' | 'xrays';
@@ -49,6 +51,8 @@ export const PatientProfileView: React.FC<PatientProfileViewProps> = ({
   onOpenNewPrescription,
   onOpenPrintCenter,
   onRescheduleAppointment,
+  currentUserRole,
+  onPatientDeleted,
 }) => {
   // DEBT-02: properly typed — replaces useState<any>(null)
   const [patient, setPatient] = useState<PatientFull | null>(null);
@@ -56,6 +60,11 @@ export const PatientProfileView: React.FC<PatientProfileViewProps> = ({
   const [loading, setLoading] = useState(true);
   // BUG-11: separate load error state so "Loading…" doesn't show forever on fetch failure
   const [loadError, setLoadError] = useState('');
+
+  // ── Delete-to-trash state ────────────────────────────────────
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   // ── Edit Profile state ──────────────────────────────────────
   const [isEditing, setIsEditing] = useState(false);
@@ -333,6 +342,21 @@ export const PatientProfileView: React.FC<PatientProfileViewProps> = ({
     }
   };
 
+  // ── Delete to trash handler ──────────────────────────────────
+  const handleDeleteToTrash = async () => {
+    if (!patient) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await api.deletePatient(patient.id);
+      onPatientDeleted?.();
+      onBack();
+    } catch (err: any) {
+      setDeleteError(err.message || 'Failed to move patient to trash.');
+      setDeleting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="p-12 text-center text-xs text-slate-500">
@@ -402,6 +426,17 @@ export const PatientProfileView: React.FC<PatientProfileViewProps> = ({
             <CalendarPlus className="w-3.5 h-3.5" />
             <span>+ Appointment</span>
           </button>
+          {/* Delete to trash — available to ADMIN and RECEPTIONIST */}
+          {(currentUserRole === 'ADMIN' || currentUserRole === 'RECEPTIONIST') && (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-rose-50 text-rose-600 rounded-lg text-xs font-medium border border-rose-200 shadow-2xs"
+              title="Move patient to trash"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -1189,6 +1224,27 @@ export const PatientProfileView: React.FC<PatientProfileViewProps> = ({
           setAllergyToDelete(null);
         }}
         onCancel={() => setAllergyToDelete(null)}
+      />
+
+      {/* ── Delete Patient to Trash Confirmation ─────────────── */}
+      {deleteError && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-2 px-4 py-3 bg-rose-50 border border-rose-300 rounded-xl shadow-lg text-xs text-rose-800">
+          <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+          <span>{deleteError}</span>
+          <button onClick={() => setDeleteError('')} className="ml-2 text-rose-400 hover:text-rose-700">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+      <ConfirmDialog
+        isOpen={confirmDelete}
+        title="Move Patient to Trash"
+        message={`This will move ${patient?.firstName ?? ''} ${patient?.lastName ?? ''} (${patient?.patientNumber ?? ''}) to the trash. All clinical records are preserved. You can restore this patient from the Patient Trash section.`}
+        confirmLabel={deleting ? 'Moving to trash…' : 'Move to Trash'}
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={handleDeleteToTrash}
+        onCancel={() => { setConfirmDelete(false); setDeleteError(''); }}
       />
     </div>
   );
